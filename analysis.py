@@ -1,43 +1,20 @@
-import requests
 import pandas as pd
-import matplotlib.pyplot as plt
 import numpy as np
+import matplotlib.pyplot as plt
 import statsmodels.formula.api as smf
 
-url = "https://data.ny.gov/resource/t6yz-b64h.json"
+df_daily = pd.read_csv("daily_facility_traffic.csv")
 
-url2 = "https://data.ny.gov/resource/ebfx-2m7v.json"
-resp = requests.get(url2, params={
-    "$select": "date, facility_id, facility, sum(traffic_count) as total_traffic",
-    "$group": "date, facility_id, facility",
-    "$limit": 50000
-})
-df_daily = pd.DataFrame(resp.json())
-df_daily["total_traffic"] = df_daily["total_traffic"].astype(int)
 treated_ids = {27, 28}  # Queens Midtown Tunnel, Hugh L. Carey Tunnel
-df_daily["facility_id"] = df_daily["facility_id"].astype(int)
 df_daily["group"] = df_daily["facility_id"].apply(lambda x: "treated" if x in treated_ids else "control")
 
 panel = df_daily.groupby(["date", "group"])["total_traffic"].sum().reset_index()
 panel["date"] = pd.to_datetime(panel["date"])
 pivot = panel.pivot(index="date", columns="group", values="total_traffic").sort_index()
 
-print(pivot.head())
-print(pivot.tail())
-
+# Parallel-trends check
 baseline = pivot.loc["2023-01-01":"2023-12-31"].mean()
-indexed = pivot.divide(baseline) * 100
-
-indexed.plot(figsize=(12, 5))
-plt.axvline(pd.Timestamp("2025-01-05"), color="red", linestyle="--", label="Tolling starts")
-plt.ylabel("Index (2023 avg = 100)")
-plt.legend()
-plt.title("Treated vs Control Traffic, Indexed to 2023 Baseline")
-plt.savefig("indexed_trends.png")
-plt.show()
-
-smoothed = pivot.rolling(7).mean()
-smoothed_indexed = smoothed.divide(baseline) * 100
+smoothed_indexed = pivot.rolling(7).mean().divide(baseline) * 100
 
 fig, ax = plt.subplots(figsize=(12, 5))
 smoothed_indexed.loc["2023-01-01":].plot(ax=ax)
@@ -48,12 +25,12 @@ ax.set_title("Treated vs Control Traffic, Smoothed")
 plt.savefig("indexed_trends_smoothed.png")
 plt.show()
 
-panel_long = panel.copy()  # date, group, total_traffic — from before, unsmoothed
+# DiD regression
+panel_long = panel.copy()
 panel_long["post"] = (panel_long["date"] >= "2025-01-05").astype(int)
 panel_long["treated"] = (panel_long["group"] == "treated").astype(int)
 panel_long["log_traffic"] = np.log(panel_long["total_traffic"])
 panel_long["dow"] = panel_long["date"].dt.dayofweek
-
 panel_long = panel_long[panel_long["date"] >= "2023-01-01"]
 
 model = smf.ols(
