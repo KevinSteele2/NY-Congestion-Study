@@ -1,3 +1,4 @@
+# %%
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -5,11 +6,14 @@ import statsmodels.formula.api as smf
 
 df_daily = pd.read_csv("daily_facility_traffic.csv")
 
+# %%
 treated_ids = {27, 28}  # Queens Midtown Tunnel, Hugh L. Carey Tunnel
 df_daily["group"] = df_daily["facility_id"].apply(lambda x: "treated" if x in treated_ids else "control")
 
 panel = df_daily.groupby(["date", "group"])["total_traffic"].sum().reset_index()
 panel["date"] = pd.to_datetime(panel["date"])
+
+# %%
 pivot = panel.pivot(index="date", columns="group", values="total_traffic").sort_index()
 
 # Parallel-trends check
@@ -25,6 +29,7 @@ ax.set_title("Treated vs Control Traffic, Smoothed")
 plt.savefig("indexed_trends_smoothed.png")
 plt.show()
 
+# %%
 # DiD regression
 panel_long = panel.copy()
 panel_long["post"] = (panel_long["date"] >= "2025-01-05").astype(int)
@@ -33,9 +38,35 @@ panel_long["log_traffic"] = np.log(panel_long["total_traffic"])
 panel_long["dow"] = panel_long["date"].dt.dayofweek
 panel_long = panel_long[panel_long["date"] >= "2023-01-01"]
 
+# %%
 model = smf.ols(
     "log_traffic ~ treated + post + treated:post + C(dow)",
     data=panel_long
 ).fit(cov_type="cluster", cov_kwds={"groups": panel_long["date"].dt.to_period("M")})
 
 print(model.summary())
+
+# %%
+panel_long["resid"] = model.resid
+outliers = panel_long.reindex(panel_long["resid"].abs().sort_values(ascending=False).index)
+print(outliers[["date", "group", "total_traffic", "resid"]].head(15))
+
+# %% Exclude known anomalous days and refit
+exclude_dates = pd.to_datetime([
+    "2026-02-22", "2026-02-23",  # NYC travel ban, historic blizzard
+    "2026-01-25", "2026-01-26",  # earlier Jan 2026 snowstorm
+    "2023-07-04", "2024-07-04",  # July 4th
+    "2024-12-25", "2025-12-27",  # Christmas / day after
+])
+
+panel_long_clean = panel_long[~panel_long["date"].isin(exclude_dates)]
+
+model_clean = smf.ols(
+    "log_traffic ~ treated + post + treated:post + C(dow)",
+    data=panel_long_clean
+).fit(cov_type="cluster", cov_kwds={"groups": panel_long_clean["date"].dt.to_period("M")})
+
+print(model_clean.summary())
+# %% Full diagnostics
+print(model_clean.summary().as_text())
+# %%
