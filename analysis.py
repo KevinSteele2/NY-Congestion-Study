@@ -7,7 +7,7 @@ import statsmodels.formula.api as smf
 df_daily = pd.read_csv("daily_facility_traffic.csv")
 
 # %%
-treated_ids = {27, 28}  # Queens Midtown Tunnel, Hugh L. Carey Tunnel
+treated_ids = {27, 28}  # Queens Midtown Tunnel & Hugh L. Carey Tunnel
 df_daily["group"] = df_daily["facility_id"].apply(lambda x: "treated" if x in treated_ids else "control")
 
 panel = df_daily.groupby(["date", "group"])["total_traffic"].sum().reset_index()
@@ -16,7 +16,7 @@ panel["date"] = pd.to_datetime(panel["date"])
 # %%
 pivot = panel.pivot(index="date", columns="group", values="total_traffic").sort_index()
 
-# Parallel-trends check
+# Parallel trends check
 baseline = pivot.loc["2023-01-01":"2023-12-31"].mean()
 smoothed_indexed = pivot.rolling(7).mean().divide(baseline) * 100
 
@@ -51,12 +51,12 @@ panel_long["resid"] = model.resid
 outliers = panel_long.reindex(panel_long["resid"].abs().sort_values(ascending=False).index)
 print(outliers[["date", "group", "total_traffic", "resid"]].head(15))
 
-# %% Exclude known anomalous days and refit
+# %% getting rid of big days and refit
 exclude_dates = pd.to_datetime([
-    "2026-02-22", "2026-02-23",  # NYC travel ban, historic blizzard
-    "2026-01-25", "2026-01-26",  # earlier Jan 2026 snowstorm
-    "2023-07-04", "2024-07-04",  # July 4th
-    "2024-12-25", "2025-12-27",  # Christmas / day after
+    "2026-02-22", "2026-02-23",  
+    "2026-01-25", "2026-01-26",  
+    "2023-07-04", "2024-07-04",  
+    "2024-12-25", "2025-12-27",  
 ])
 
 panel_long_clean = panel_long[~panel_long["date"].isin(exclude_dates)]
@@ -67,7 +67,7 @@ model_clean = smf.ols(
 ).fit(cov_type="cluster", cov_kwds={"groups": panel_long_clean["date"].dt.to_period("M")})
 
 print(model_clean.summary())
-# %% Full diagnostics
+# %% Full 
 print(model_clean.summary().as_text())
 # %%
 from statsmodels.stats.stattools import durbin_watson
@@ -81,10 +81,9 @@ resid_control = panel_long_clean.loc[panel_long_clean["treated"] == 0, "resid"].
 print(f"Treated DW: {durbin_watson(resid_treated):.3f}")
 print(f"Control DW: {durbin_watson(resid_control):.3f}")
 # %%
-# pip install linearmodels --break-system-packages   (if not already installed)
 
 panel_indexed = panel_long_clean.copy()
-panel_indexed["entity"] = panel_indexed["group"]  # "treated" or "control"
+panel_indexed["entity"] = panel_indexed["group"] 
 panel_indexed = panel_indexed.set_index(["entity", "date"])
 # %%
 from linearmodels.panel import PanelOLS
@@ -103,7 +102,7 @@ dw_final = durbin_watson(res.resids)
 print(f"Post-fit DW: {dw_final:.3f}")
 # %%
 resid_series = res.resids.copy()
-resid_series.index = panel_indexed.index  # restore entity/date multiindex
+resid_series.index = panel_indexed.index
 
 resid_treated_final = resid_series.xs("treated", level="entity").sort_index()
 resid_control_final = resid_series.xs("control", level="entity").sort_index()
