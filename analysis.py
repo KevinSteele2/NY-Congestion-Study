@@ -70,3 +70,48 @@ print(model_clean.summary())
 # %% Full diagnostics
 print(model_clean.summary().as_text())
 # %%
+from statsmodels.stats.stattools import durbin_watson
+
+dw_stat = durbin_watson(model_clean.resid)
+print(f"Durbin-Watson: {dw_stat:.3f}")
+# %%
+resid_treated = panel_long_clean.loc[panel_long_clean["treated"] == 1, "resid"].sort_index()
+resid_control = panel_long_clean.loc[panel_long_clean["treated"] == 0, "resid"].sort_index()
+
+print(f"Treated DW: {durbin_watson(resid_treated):.3f}")
+print(f"Control DW: {durbin_watson(resid_control):.3f}")
+# %%
+# pip install linearmodels --break-system-packages   (if not already installed)
+
+panel_indexed = panel_long_clean.copy()
+panel_indexed["entity"] = panel_indexed["group"]  # "treated" or "control"
+panel_indexed = panel_indexed.set_index(["entity", "date"])
+# %%
+from linearmodels.panel import PanelOLS
+
+panel_indexed["treated_post"] = panel_indexed["treated"] * panel_indexed["post"]
+
+mod = PanelOLS.from_formula(
+    "log_traffic ~ treated_post + EntityEffects + TimeEffects",
+    data=panel_indexed
+)
+res = mod.fit(cov_type="kernel", kernel="bartlett", bandwidth=7)
+
+print(res)
+# %%
+dw_final = durbin_watson(res.resids)
+print(f"Post-fit DW: {dw_final:.3f}")
+# %%
+resid_series = res.resids.copy()
+resid_series.index = panel_indexed.index  # restore entity/date multiindex
+
+resid_treated_final = resid_series.xs("treated", level="entity").sort_index()
+resid_control_final = resid_series.xs("control", level="entity").sort_index()
+
+print(f"Treated DW: {durbin_watson(resid_treated_final):.3f}")
+print(f"Control DW: {durbin_watson(resid_control_final):.3f}")
+# %%
+for bw in [4, 7, 14, 21]:
+    r = mod.fit(cov_type="kernel", kernel="bartlett", bandwidth=bw)
+    print(f"bandwidth={bw}: coef={r.params['treated_post']:.4f}, se={r.std_errors['treated_post']:.4f}, p={r.pvalues['treated_post']:.4f}")
+# %%
